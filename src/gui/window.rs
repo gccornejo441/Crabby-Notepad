@@ -8,18 +8,19 @@ use std::{
 use windows::{
     core::{w, HSTRING, PCWSTR},
     Win32::{
-        Foundation::{HWND, LPARAM, LRESULT, WPARAM},
-        System::LibraryLoader::GetModuleHandleW,
-        UI::WindowsAndMessaging::{
-            CreateWindowExW, DefWindowProcW, LoadCursorW,
-            PostQuitMessage, RegisterClassExW, ShowWindow,
-            CW_USEDEFAULT, IDC_ARROW, SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY, WNDCLASSEXW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
-        },
+        Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM}, Graphics::Gdi::{BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, HBRUSH, HGDIOBJ, PAINTSTRUCT}, System::LibraryLoader::GetModuleHandleW, UI::WindowsAndMessaging::{
+            AppendMenuW, CreateMenu, CreateWindowExW, DefWindowProcW, GetClientRect, LoadCursorW, PostQuitMessage, RegisterClassExW, SetMenu, ShowWindow, CW_USEDEFAULT, HMENU, IDC_ARROW, MF_STRING, SW_SHOW, WINDOW_EX_STYLE, WM_DESTROY, WM_PAINT, WNDCLASSEXW, WS_OVERLAPPEDWINDOW, WS_VISIBLE
+        }
     },
 };
 
 pub struct Window {
     handle: HWND,
+    menu: HMENU,
+}
+
+fn RGB(r: u8, g: u8, b: u8) -> COLORREF {
+    COLORREF((r as u32) | ((g as u32) << 8) | ((b as u32) << 16))
 }
 
 impl Window {
@@ -58,9 +59,15 @@ impl Window {
                 None,
             )?;
 
+            let hmenu = CreateMenu();
+            let file_menu = CreateMenu();
+            let file_menu = hmenu.unwrap();
+            AppendMenuW(file_menu, MF_STRING, 1, w!("File"));
+            SetMenu(hwnd, file_menu);
+
             ShowWindow(hwnd, SW_SHOW);
 
-            Ok(Box::new(Window { handle: hwnd }))
+            Ok(Box::new(Window { handle: hwnd, menu: file_menu }))
         }
     }
 }
@@ -76,6 +83,27 @@ unsafe extern "system" fn wnd_proc(
             PostQuitMessage(0);
             return LRESULT(0);
         }
+        WM_PAINT => {
+            let mut lppaint = PAINTSTRUCT::default();
+            let hdc = BeginPaint(hwnd, &mut lppaint);
+            let mut rect: RECT = RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            };
+            GetClientRect(hwnd, &mut rect);
+            
+            let sandish_color = RGB(240, 238, 229);
+            let white_color = RGB(255,255,255);
+            let white_brush: HBRUSH = CreateSolidBrush(white_color);
+
+            FillRect(hdc, &rect, white_brush);
+        
+            EndPaint(hwnd, &lppaint);
+        
+            return LRESULT(0);
+        }        
         _ => {
             return DefWindowProcW(hwnd, msg, wparam, lparam);
         }

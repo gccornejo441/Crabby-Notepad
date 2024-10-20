@@ -1,4 +1,5 @@
 use gui::window;
+use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, GetMessageW, MSG};
 
 // Initializes the main window.
 mod config;
@@ -14,10 +15,10 @@ fn main() {
 
     let window = window::Window::new(&window_title, window_width, window_height).expect("Failed to create window");
 
-    let mut message = windows::Win32::UI::WindowsAndMessaging::MSG::default();
-    while unsafe { windows::Win32::UI::WindowsAndMessaging::GetMessageW(&mut message, None, 0, 0).into() } {
+    let mut message = MSG::default();
+    while unsafe { GetMessageW(&mut message, None, 0, 0).into() } {
         unsafe {
-            windows::Win32::UI::WindowsAndMessaging::DispatchMessageW(&message);
+            DispatchMessageW(&message);
         }
     }
 }

@@ -1,7 +1,6 @@
 use gui::window;
 use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, GetMessageW, MSG};
 
-// Initializes the main window.
 mod config;
 mod gui;
 

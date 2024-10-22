@@ -1,5 +1,9 @@
 use std::{
-    ffi::OsStr, mem, os::windows::ffi::OsStrExt, ptr, time::{SystemTime, UNIX_EPOCH}
+    ffi::OsStr,
+    mem,
+    os::windows::ffi::OsStrExt,
+    ptr,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use windows::{
@@ -7,13 +11,23 @@ use windows::{
     Win32::{
         Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM},
         Graphics::Gdi::{
-            BeginPaint, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, GetWindowDC, ReleaseDC, SetBkColor, SetTextColor, DT_CENTER, DT_SINGLELINE, HBRUSH, HGDIOBJ, PAINTSTRUCT
+            BeginPaint, CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect,
+            GetWindowDC, LineTo, MoveToEx, Rectangle, ReleaseDC, SelectObject, SetBkColor,
+            SetBkMode, SetTextColor, TextOutW, CHARSET_UNICODE, CLIP_DEFAULT_PRECIS,
+            DEFAULT_QUALITY, DT_CENTER, DT_SINGLELINE, FF_DONTCARE, FW_DONTCARE, HBRUSH, HFONT,
+            HGDIOBJ, OUT_TT_PRECIS, PAINTSTRUCT, TRANSPARENT,
         },
         System::LibraryLoader::GetModuleHandleW,
         UI::{
             Controls::{DRAWITEMSTRUCT, MEASUREITEMSTRUCT},
             WindowsAndMessaging::{
-                AppendMenuW, CreateMenu, CreateWindowExW, DefWindowProcW, GetClientRect, LoadCursorW, PostQuitMessage, RegisterClassExW, SetMenu, SetMenuInfo, ShowWindow, CW_USEDEFAULT, HMENU, IDC_ARROW, MENUINFO, MENUINFO_MASK, MENUINFO_STYLE, MF_CHECKED, MF_OWNERDRAW, MF_POPUP, MF_STRING, MIM_APPLYTOSUBMENUS, MIM_STYLE, MNS_NOTIFYBYPOS, SW_SHOW, WINDOW_EX_STYLE, WM_COMMAND, WM_DESTROY, WM_DRAWITEM, WM_MEASUREITEM, WM_NCPAINT, WM_PAINT, WNDCLASSEXW, WS_OVERLAPPEDWINDOW, WS_VISIBLE
+                AppendMenuW, CreateMenu, CreateWindowExW, DefWindowProcW, GetClientRect,
+                GetWindowRect, LoadCursorW, PostQuitMessage, RegisterClassExW, SetMenu,
+                SetMenuInfo, ShowWindow, CW_USEDEFAULT, HMENU, IDC_ARROW, MENUINFO, MENUINFO_MASK,
+                MENUINFO_STYLE, MF_CHECKED, MF_OWNERDRAW, MF_POPUP, MF_STRING, MIM_APPLYTOSUBMENUS,
+                MIM_STYLE, MNS_NOTIFYBYPOS, SW_SHOW, WINDOW_EX_STYLE, WM_COMMAND, WM_DESTROY,
+                WM_DRAWITEM, WM_MEASUREITEM, WM_NCPAINT, WM_PAINT, WNDCLASSEXW,
+                WS_OVERLAPPEDWINDOW, WS_VISIBLE,
             },
         },
     },
@@ -21,7 +35,6 @@ use windows::{
 
 pub struct Window {
     handle: HWND,
-    menu: HMENU,
 }
 
 fn RGB(r: u8, g: u8, b: u8) -> COLORREF {
@@ -64,42 +77,45 @@ impl Window {
                 None,
             )?;
 
-            let menu = CreateMenu()?;
-
-            AppendMenuW(menu, MF_OWNERDRAW, 100, w!("New"));
-            AppendMenuW(menu, MF_OWNERDRAW, 101, w!("Open"));
-            SetMenu(hwnd, menu);
+            let hmenu = create_menus()?;
+            SetMenu(hwnd, hmenu);
 
             ShowWindow(hwnd, SW_SHOW);
 
-            Ok(Box::new(Window {
-                handle: hwnd,
-                menu: menu,
-            }))
+            Ok(Box::new(Window { handle: hwnd }))
         }
     }
 }
 
-unsafe fn draw_menu_item(draw_item_struct: DRAWITEMSTRUCT) {
-    let mut dis = draw_item_struct;
-    let hdc = dis.hDC;
+unsafe fn create_menus() -> Result<HMENU, windows::core::Error> {
+    let hmenu = CreateMenu()?;
+    if hmenu.is_invalid() {
+        return Err(windows::core::Error::from_win32());
+    }
 
-    SetBkColor(hdc, RGB(0, 128, 128));
-    SetTextColor(hdc, RGB(255, 255, 255));
+    let file_menu = CreateMenu()?;
+    let edit_menu = CreateMenu()?;
+    let view_menu = CreateMenu()?;
 
-    let brush = CreateSolidBrush(RGB(0, 128, 128));
-    FillRect(hdc, &dis.rcItem, brush);
-    DeleteObject(brush);
+    AppendMenuW(file_menu, MF_STRING, 1, w!("New"));
+    AppendMenuW(file_menu, MF_STRING, 2, w!("Open"));
+    AppendMenuW(file_menu, MF_STRING, 3, w!("Save"));
 
-    let text = match dis.itemID {
-        100 => "New",
-        101 => "Open",
-        _ => "",
-    };
+    AppendMenuW(edit_menu, MF_STRING, 4, w!("Undo"));
+    AppendMenuW(edit_menu, MF_STRING, 5, w!("Redo"));
+    AppendMenuW(edit_menu, MF_STRING, 6, w!("Cut"));
+    AppendMenuW(edit_menu, MF_STRING, 7, w!("Copy"));
+    AppendMenuW(edit_menu, MF_STRING, 8, w!("Paste"));
 
-    let mut text_wide: Vec<u16> = text.encode_utf16().collect();
-    let mut rect = dis.rcItem;
-    DrawTextW(hdc, &mut text_wide, &mut rect, DT_CENTER | DT_SINGLELINE);
+    AppendMenuW(view_menu, MF_STRING, 9, w!("Zoom In"));
+    AppendMenuW(view_menu, MF_STRING, 10, w!("Zoom Out"));
+    AppendMenuW(view_menu, MF_STRING, 11, w!("Actual Size"));
+
+    AppendMenuW(hmenu, MF_POPUP, file_menu.0 as usize, w!("File"));
+    AppendMenuW(hmenu, MF_POPUP, edit_menu.0 as usize, w!("Edit"));
+    AppendMenuW(hmenu, MF_POPUP, view_menu.0 as usize, w!("View"));
+
+    Ok(hmenu)
 }
 
 unsafe extern "system" fn wnd_proc(
@@ -113,53 +129,41 @@ unsafe extern "system" fn wnd_proc(
             PostQuitMessage(0);
             return LRESULT(0);
         }
-        WM_PAINT => {
-            let mut lppaint = PAINTSTRUCT::default();
-            let hdc = BeginPaint(hwnd, &mut lppaint);
-
-            let mut rect = RECT::default();
-            GetClientRect(hwnd, &mut rect); 
-            FillRect(hdc, &rect, CreateSolidBrush(RGB(255,0,0)));
-            EndPaint(hwnd, &lppaint);
-            return LRESULT(0);
-        }
-        WM_NCPAINT => {
-            let hdc = GetWindowDC(hwnd);
-            
-            let mut rect = RECT::default();
-            GetClientRect(hwnd, &mut rect);
-
-            let brush = CreateSolidBrush(RGB(0, 128, 128)); 
-            FillRect(hdc, &rect, brush);
-            DeleteObject(brush);
-            
-            ReleaseDC(hwnd, hdc);
-            return LRESULT(0);
-        }
-        WM_DRAWITEM => {
-            let dis = &*(lparam.0 as *const DRAWITEMSTRUCT);
-            draw_menu_item(*dis);
-            return LRESULT(0);
-        }
-        WM_MEASUREITEM => {
-            let mis = &mut *(lparam.0 as *mut MEASUREITEMSTRUCT);
-            mis.itemWidth = 100;
-            mis.itemHeight = 30;
-            return LRESULT(0);
-        }
         WM_COMMAND => {
             let menu_id = wparam.0 as u16;
 
             match menu_id {
-                1 => {
-                    println!("File menu clicked!");
-                }
+                1 => println!("File -> New clicked!"),
+                2 => println!("File -> Open clicked!"),
+                3 => println!("File -> Save clicked!"),
+                4 => println!("Edit -> Undo clicked!"),
+                5 => println!("Edit -> Redo clicked!"),
+                6 => println!("Edit -> Cut clicked!"),
+                7 => println!("Edit -> Copy clicked!"),
+                8 => println!("Edit -> Paste clicked!"),
+                9 => println!("View -> Zoom In clicked!"),
+                10 => println!("View -> Zoom Out clicked!"),
+                11 => println!("View -> Actual Size clicked!"),
                 _ => (),
             }
             return LRESULT(0);
         }
-        _ => {
-            return DefWindowProcW(hwnd, msg, wparam, lparam);
+        WM_PAINT => {
+            let mut lppaint = PAINTSTRUCT::default();
+            let hdc = BeginPaint(hwnd, &mut lppaint);
+            
+            let mut rect = RECT::default();
+            GetClientRect(hwnd, &mut rect);
+
+            let dark_brush = CreateSolidBrush(RGB(255,255, 255));
+
+            FillRect(hdc, &rect, dark_brush);
+            DeleteObject(dark_brush);
+
+            EndPaint(hwnd, &mut lppaint);
+
+            LRESULT(0)
         }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }

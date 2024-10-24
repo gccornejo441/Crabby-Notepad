@@ -1,9 +1,5 @@
 use std::{
-    ffi::OsStr,
-    mem,
-    os::windows::ffi::OsStrExt,
-    ptr,
-    time::{SystemTime, UNIX_EPOCH},
+    ffi::{c_void, OsStr}, fmt::Error, fs::read_to_string, mem, os::windows::ffi::OsStrExt, ptr, thread::sleep, time::{SystemTime, UNIX_EPOCH}
 };
 
 use windows::{
@@ -11,30 +7,35 @@ use windows::{
     Win32::{
         Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM},
         Graphics::Gdi::{
-            BeginPaint, CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect,
-            GetWindowDC, LineTo, MoveToEx, Rectangle, ReleaseDC, SelectObject, SetBkColor,
-            SetBkMode, SetTextColor, TextOutW, CHARSET_UNICODE, CLIP_DEFAULT_PRECIS,
-            DEFAULT_QUALITY, DT_CENTER, DT_SINGLELINE, FF_DONTCARE, FW_DONTCARE, HBRUSH, HFONT,
-            HGDIOBJ, OUT_TT_PRECIS, PAINTSTRUCT, TRANSPARENT,
+            BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, InvalidateRect, TextOutW, PAINTSTRUCT
         },
-        System::LibraryLoader::GetModuleHandleW,
+        System::{
+            Com::{
+                CoCreateInstance, CoIncrementMTAUsage, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL,
+                COINIT_APARTMENTTHREADED,
+            },
+            LibraryLoader::GetModuleHandleW,
+        },
         UI::{
-            Controls::{DRAWITEMSTRUCT, MEASUREITEMSTRUCT},
+            Shell::{
+                Common::COMDLG_FILTERSPEC, FileOpenDialog, FileSaveDialog, IFileOpenDialog, IFileSaveDialog, OpenControlPanel, FOS_ALLNONSTORAGEITEMS, SIGDN_FILESYSPATH
+            },
             WindowsAndMessaging::{
-                AppendMenuW, CreateMenu, CreateWindowExW, DefWindowProcW, GetClientRect,
-                GetWindowRect, LoadCursorW, PostQuitMessage, RegisterClassExW, SetMenu,
-                SetMenuInfo, ShowWindow, CW_USEDEFAULT, HMENU, IDC_ARROW, MENUINFO, MENUINFO_MASK,
-                MENUINFO_STYLE, MF_CHECKED, MF_OWNERDRAW, MF_POPUP, MF_STRING, MIM_APPLYTOSUBMENUS,
-                MIM_STYLE, MNS_NOTIFYBYPOS, SW_SHOW, WINDOW_EX_STYLE, WM_COMMAND, WM_DESTROY,
-                WM_DRAWITEM, WM_MEASUREITEM, WM_NCPAINT, WM_PAINT, WNDCLASSEXW,
-                WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+                AppendMenuW, CreateMenu, CreateWindowExW, DefWindowProcW, GetClientRect, GetWindowLongPtrW, GetWindowTextW, LoadCursorW, PostQuitMessage, RegisterClassExW, SetMenu, SetWindowLongPtrW, SetWindowTextW, ShowWindow, CREATESTRUCTW, CW_USEDEFAULT, ES_MULTILINE, GWLP_USERDATA, HMENU, IDC_ARROW, MF_POPUP, MF_STRING, SW_SHOW, WINDOW_EX_STYLE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_PAINT, WNDCLASSEXW, WS_BORDER, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_VISIBLE, WS_VSCROLL
             },
         },
     },
 };
+use lazy_static::lazy_static;
+use std::sync::Mutex;
+
+lazy_static! {
+    static ref FILE_CONTENT: Mutex<String> = Mutex::new(String::new());
+}
 
 pub struct Window {
     handle: HWND,
+    edit_control: HWND,
 }
 
 fn RGB(r: u8, g: u8, b: u8) -> COLORREF {
@@ -61,6 +62,12 @@ impl Window {
             if RegisterClassExW(&class) == 0 {
                 return Err(windows::core::Error::from_win32());
             }
+            let mut window = Box::new(Window {
+                handle: HWND(std::ptr::null_mut()),
+                edit_control: HWND(std::ptr::null_mut()),
+            });
+
+            let window_ptr = Box::into_raw(window);
 
             let hwnd = CreateWindowExW(
                 WINDOW_EX_STYLE(0),
@@ -74,17 +81,73 @@ impl Window {
                 None,
                 None,
                 hinstance,
+                Some(window_ptr as *const _ as *const c_void),
+            )?;
+
+            let edit_control = CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("EDIT"),
+                PCWSTR::null(),
+                WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL,
+                0,
+                0,
+                width as i32,
+                height as i32,
+                hwnd,
+                None,
+                hinstance,
                 None,
             )?;
 
-            let hmenu = create_menus()?;
-            SetMenu(hwnd, hmenu);
-
-            ShowWindow(hwnd, SW_SHOW);
-
-            Ok(Box::new(Window { handle: hwnd }))
+            Ok(Box::from_raw(window_ptr))
         }
     }
+}
+fn save_file(edit_control: HWND) -> Result<(), Box<dyn std::error::Error>> {
+    let dialog: IFileSaveDialog = unsafe {
+        CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)?
+    };
+
+    unsafe {
+        if dialog.Show(None).is_ok() {
+            let result = dialog.GetResult()?;
+            let path = result.GetDisplayName(SIGDN_FILESYSPATH)?;
+
+            let mut buffer = vec![0u16; 1024];
+            let len = GetWindowTextW(edit_control, &mut buffer) as usize;
+
+            let content = String::from_utf16_lossy(&buffer[..len]);
+
+            std::fs::write(PCWSTR(path.0).to_string()?, content)?;
+        }
+    }
+    Ok(())
+}
+
+fn open_file(hwnd: HWND, edit_control: HWND) -> Result<(), Box<dyn std::error::Error>> {
+    let dialog: IFileOpenDialog = unsafe {
+        CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL)?
+    };
+
+    unsafe {
+        let mut dialog_options = 0;
+        dialog.GetOptions()?;
+        dialog.SetOptions(FOS_ALLNONSTORAGEITEMS)?;
+    }
+
+    unsafe {
+        if dialog.Show(None).is_ok() {
+            let result = dialog.GetResults()?;
+            let item = result.GetItemAt(0)?;
+            let path = item.GetDisplayName(SIGDN_FILESYSPATH)?;
+
+            let file_path = PCWSTR(path.0).to_string()?;
+            let file_content = std::fs::read_to_string(file_path)?;
+
+            SetWindowTextW(edit_control, &HSTRING::from(file_content));
+        }
+    }
+    Ok(())
 }
 
 unsafe fn create_menus() -> Result<HMENU, windows::core::Error> {
@@ -129,33 +192,57 @@ unsafe extern "system" fn wnd_proc(
             PostQuitMessage(0);
             return LRESULT(0);
         }
-        WM_COMMAND => {
-            let menu_id = wparam.0 as u16;
+        WM_CREATE => {
+            let create_struct = &*(lparam.0 as *mut CREATESTRUCTW);
+            let window_ptr = (*create_struct).lpCreateParams as *mut Window;
 
-            match menu_id {
-                1 => println!("File -> New clicked!"),
-                2 => println!("File -> Open clicked!"),
-                3 => println!("File -> Save clicked!"),
-                4 => println!("Edit -> Undo clicked!"),
-                5 => println!("Edit -> Redo clicked!"),
-                6 => println!("Edit -> Cut clicked!"),
-                7 => println!("Edit -> Copy clicked!"),
-                8 => println!("Edit -> Paste clicked!"),
-                9 => println!("View -> Zoom In clicked!"),
-                10 => println!("View -> Zoom Out clicked!"),
-                11 => println!("View -> Actual Size clicked!"),
-                _ => (),
+            if !window_ptr.is_null() {
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, window_ptr as isize);
+                (*window_ptr).handle = hwnd;
             }
+            LRESULT(0)
+        }
+        WM_COMMAND => {
+            let window_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Window;
+    
+            if !window_ptr.is_null() {
+                let window = &*window_ptr;
+
+                let menu_id = wparam.0 as u16;
+                match menu_id {
+                    1 => println!("File -> New clicked!"),
+                    2 => {
+                        if let Err(e) = open_file(window.handle, window.edit_control) {
+                            eprintln!("Error opening file: {:?}", e);
+                        }
+                    }
+                    3 => {
+                        if let Err(e) = save_file(window.edit_control) {
+                            eprintln!("Error saving file: {:?}", e);
+                        }
+                    }
+                    4 => println!("Edit -> Undo clicked!"),
+                    5 => println!("Edit -> Redo clicked!"),
+                    6 => println!("Edit -> Cut clicked!"),
+                    7 => println!("Edit -> Copy clicked!"),
+                    8 => println!("Edit -> Paste clicked!"),
+                    9 => println!("View -> Zoom In clicked!"),
+                    10 => println!("View -> Zoom Out clicked!"),
+                    11 => println!("View -> Actual Size clicked!"),
+                    _ => (),
+                }
+            }
+            println!("window_ptr is null");
             return LRESULT(0);
         }
         WM_PAINT => {
             let mut lppaint = PAINTSTRUCT::default();
             let hdc = BeginPaint(hwnd, &mut lppaint);
-            
+
             let mut rect = RECT::default();
             GetClientRect(hwnd, &mut rect);
 
-            let dark_brush = CreateSolidBrush(RGB(255,255, 255));
+            let dark_brush = CreateSolidBrush(RGB(255, 255, 255));
 
             FillRect(hdc, &rect, dark_brush);
             DeleteObject(dark_brush);

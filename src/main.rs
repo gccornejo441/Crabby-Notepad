@@ -1,4 +1,5 @@
 use gui::window;
+
 use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, GetMessageW, MSG};
 
 mod config;

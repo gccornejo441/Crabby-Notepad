@@ -2,8 +2,8 @@
 // Handles configurations that might involve paths, settings, and other configurations that might need to be loaded or saved.
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self, OpenOptions},
-    io::{Read, Write},
+    fs::{self},
+    io::Write,
 };
 
 #[derive(Serialize, Deserialize)]
@@ -28,6 +28,7 @@ pub struct EditorConfig {
 impl Config {
     /// Creates a new configuration instance with default values.
     pub fn new() -> Config {
+
         let window_config = WindowConfig {
             width: 500,
             height: 500,

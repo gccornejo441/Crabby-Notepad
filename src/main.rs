@@ -1,24 +1,35 @@
-use gui::window;
+mod app;
 
-use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, GetMessageW, MSG};
+use app::Application;
+use config::Config;
+use log::info;
+use winit::event_loop::{ControlFlow, EventLoop};
 
 mod config;
-mod gui;
 
 fn main() {
-    let config = config::Config::new();
-    config.load().expect("Failed to load configuration");
+    dotenvy::dotenv().unwrap();
+    env_logger::init();
 
-    let window_title = config.window.title;
-    let window_width = config.window.width;
-    let window_height = config.window.height;
-
-    let window = window::Window::new(&window_title, window_width, window_height).expect("Failed to create window");
-
-    let mut message = MSG::default();
-    while unsafe { GetMessageW(&mut message, None, 0, 0).into() } {
-        unsafe {
-            DispatchMessageW(&message);
+    let config = Config::new().load().unwrap_or_else(|err| {
+        info!("Failed to load configuration: {}", err);
+        Config {
+            window: config::WindowConfig {
+                title: "Crabby Notepad".to_string(),
+                width: 800,
+                height: 600,
+            },
+            editor: config::EditorConfig {
+                font_size: 12,
+                font_family: "Arial".to_string(),
+            },
         }
-    }
+    });
+
+    // Application::init(app);
+    Application::init(Application {
+        title: config.window.title,
+        width: config.window.width,
+        height: config.window.height,
+    });
 }

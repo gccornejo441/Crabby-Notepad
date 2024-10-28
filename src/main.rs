@@ -1,6 +1,6 @@
 mod app;
 
-use app::Application;
+use app::CrabbyApp;
 use config::Config;
 use log::info;
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -26,10 +26,11 @@ fn main() {
         }
     });
 
-    // Application::init(app);
-    Application::init(Application {
+    CrabbyApp::init(CrabbyApp {
         title: config.window.title,
         width: config.window.width,
         height: config.window.height,
+        release_info: "LATEST".to_string(),
+        show_left_panel: true
     });
 }
